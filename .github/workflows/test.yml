@@ -1,18 +1,6 @@
 name: 🏗️ 手动构建 Release APK
 
 on:
-  # push:  # 自动触发已注释，仅保留手动触发
-  #   branches: [ master ]
-  #   paths:
-  #     - 'lyrico-app/**'
-  #     - 'lyrico-audiotag/**'
-  #     - 'lyrico-lyrics/**'
-  #     - 'gradle/**'
-  #     - 'build.gradle'
-  #     - 'settings.gradle'
-  #     - 'gradle.properties'
-  #     - 'gradlew'
-  #     - '.github/workflows/build-debug.yml'
   workflow_dispatch:
 
 concurrency:
@@ -46,20 +34,15 @@ jobs:
       - name: 🔐 赋予 gradlew 执行权限
         run: chmod +x gradlew
 
-      # ✅ 新增：升级 Ninja 到 >= 1.11，修复 CMake 报错：
-      #   "The Ninja generator does not support C++20 modules using Ninja version 1.10.2"
+      # 修复 CMake 报错：Ninja 1.10.2 不支持 C++20 modules，需要 >= 1.11
       - name: 🥷 升级 Ninja (>= 1.11)
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y ninja-build
-          echo "System ninja: $(ninja --version)"
-
-          # 确认版本 >= 1.11
           SYS_NINJA="$(command -v ninja)"
           SYS_VER="$(ninja --version)"
           if [ "$(printf '%s\n%s\n' "1.11" "$SYS_VER" | sort -V | head -n1)" != "1.11" ]; then
-            echo "系统 ninja 版本 $SYS_VER 仍低于 1.11，改为从官方 release 下载"
             curl -fsSL -o /tmp/ninja.zip \
               https://github.com/ninja-build/ninja/releases/latest/download/ninja-linux.zip
             sudo apt-get install -y unzip
@@ -68,8 +51,6 @@ jobs:
             SYS_NINJA="/usr/local/bin/ninja"
           fi
           echo "Using ninja: $SYS_NINJA ($($SYS_NINJA --version))"
-
-          # 替换 Android SDK 内 CMake 使用的旧 Ninja（AGP 通过 -DCMAKE_MAKE_PROGRAM 指向它）
           for f in /usr/local/lib/android/sdk/cmake/*/bin/ninja; do
             [ -e "$f" ] || continue
             echo "Replacing $f"
@@ -78,15 +59,35 @@ jobs:
             echo "  -> $("$f" --version)"
           done
 
+      # 生成 CI 临时 Release Keystore，用于给 release 包签名
+      - name: 🔑 生成临时 Release Keystore
+        run: |
+          set -euo pipefail
+          KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
+          rm -f "$KEYSTORE_FILE"
+          keytool -genkeypair -v \
+            -keystore "$KEYSTORE_FILE" \
+            -alias qfun \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass qfun123456 -keypass qfun123456 \
+            -dname "CN=QFun, OU=Dev, O=QFun, L=Shanghai, ST=Shanghai, C=CN"
+          echo "KEYSTORE_FILE=$KEYSTORE_FILE" >> "$GITHUB_ENV"
+
       - name: 🐘 配置 Gradle
         uses: gradle/actions/setup-gradle@v5
 
+      # 用 AGP injected signing 注入签名，无需修改 build.gradle.kts
       - name: 🛠️ 构建 Release APK
-        run: ./gradlew assembleRelease --stacktrace
+        run: |
+          ./gradlew assembleRelease --stacktrace \
+            -Pandroid.injected.signing.store.file="$KEYSTORE_FILE" \
+            -Pandroid.injected.signing.store.password=qfun123456 \
+            -Pandroid.injected.signing.key.alias=qfun \
+            -Pandroid.injected.signing.key.password=qfun123456
 
       - name: 📤 上传 APK
         uses: actions/upload-artifact@v4
         with:
-          name: Lyrico-release
-          path: lyrico-app/build/outputs/apk/release/*.apk
+          name: QFun-release
+          path: app/build/outputs/apk/release/*.apk
           retention-days: 3
