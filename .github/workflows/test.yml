@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: debug-apk-${{ github.ref }}
+  group: release-apk-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -45,6 +45,38 @@ jobs:
 
       - name: 🔐 赋予 gradlew 执行权限
         run: chmod +x gradlew
+
+      # ✅ 新增：升级 Ninja 到 >= 1.11，修复 CMake 报错：
+      #   "The Ninja generator does not support C++20 modules using Ninja version 1.10.2"
+      - name: 🥷 升级 Ninja (>= 1.11)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+          echo "System ninja: $(ninja --version)"
+
+          # 确认版本 >= 1.11
+          SYS_NINJA="$(command -v ninja)"
+          SYS_VER="$(ninja --version)"
+          if [ "$(printf '%s\n%s\n' "1.11" "$SYS_VER" | sort -V | head -n1)" != "1.11" ]; then
+            echo "系统 ninja 版本 $SYS_VER 仍低于 1.11，改为从官方 release 下载"
+            curl -fsSL -o /tmp/ninja.zip \
+              https://github.com/ninja-build/ninja/releases/latest/download/ninja-linux.zip
+            sudo apt-get install -y unzip
+            sudo unzip -o /tmp/ninja.zip -d /usr/local/bin
+            sudo chmod +x /usr/local/bin/ninja
+            SYS_NINJA="/usr/local/bin/ninja"
+          fi
+          echo "Using ninja: $SYS_NINJA ($($SYS_NINJA --version))"
+
+          # 替换 Android SDK 内 CMake 使用的旧 Ninja（AGP 通过 -DCMAKE_MAKE_PROGRAM 指向它）
+          for f in /usr/local/lib/android/sdk/cmake/*/bin/ninja; do
+            [ -e "$f" ] || continue
+            echo "Replacing $f"
+            sudo cp -L "$SYS_NINJA" "$f"
+            sudo chmod +x "$f"
+            echo "  -> $("$f" --version)"
+          done
 
       - name: 🐘 配置 Gradle
         uses: gradle/actions/setup-gradle@v5
