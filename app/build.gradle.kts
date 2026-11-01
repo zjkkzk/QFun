@@ -70,8 +70,8 @@ extensions.configure<ApplicationExtension> {
         versionName = modVersionName
 
         ndk {
+            // 只构建 arm64-v8a，去掉 armeabi-v7a
             abiFilters.add("arm64-v8a")
-            abiFilters.add("armeabi-v7a")
         }
 
         externalNativeBuild {
@@ -139,9 +139,15 @@ extensions.configure<ApplicationExtension> {
             "--package-id",
             "0x44",
         )
+        // DEX 不做压缩，以 STORED 方式打包
+        noCompress += listOf("dex")
     }
 
     packaging {
+        // 关闭 legacy packaging，DEX 以 STORED（仅存储、不压缩）方式打包
+        dex {
+            useLegacyPackaging = false
+        }
         resources {
             excludes += setOf(
                 "META-INF*.proto"
